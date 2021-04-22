@@ -1,3 +1,13 @@
+mod bindings {
+    ::windows::include_bindings!();
+}
+
+mod private {
+    pub trait Sealed {}
+
+    impl<T: AsRef<str>> Sealed for T {}
+}
+
 use bindings::Windows::Win32::{
     DataExchange::*,
     SystemServices::{CLIPBOARD_FORMATS, HANDLE},
@@ -85,7 +95,7 @@ fn close_clipboard() -> bool {
     }.0 != 0
 }
 
-trait Lpwstr {
+pub trait Lpwstr: private::Sealed {
     fn to_lpwstr(&self) -> Vec<u16>;
 }
 
