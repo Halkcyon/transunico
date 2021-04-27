@@ -95,11 +95,11 @@ fn close_clipboard() -> bool {
     }.0 != 0
 }
 
-pub trait Lpwstr: private::Sealed {
+pub trait ToLpwstr: private::Sealed {
     fn to_lpwstr(&self) -> Vec<u16>;
 }
 
-impl<T> Lpwstr for T
+impl<T> ToLpwstr for T
 where
     T: AsRef<str>
 {
@@ -108,6 +108,34 @@ where
             .encode_utf16()
             .chain(std::iter::once(0))
             .collect()
+    }
+}
+
+pub struct Lpwstr;
+
+impl Lpwstr {
+    /// # Safety
+    /// You must ensure your slice has a null-terminating byte.
+    pub unsafe fn from_lpwstr(ptr: *const u16) -> String {
+        use std::slice::from_raw_parts;
+
+        if ptr.is_null() {
+            return String::new();
+        }
+
+        let slice = {
+            let mut len = 0;
+            loop {
+                if *ptr.offset(len) == 0 {
+                    break;
+                }
+                len += 1;
+            }
+
+            from_raw_parts(ptr, len as _)
+        };
+
+        String::from_utf16(slice).unwrap()
     }
 }
 
@@ -132,7 +160,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_round_trip() {
+        let string = "abcdef";
+        let mut lpwstr = string.to_lpwstr();
+
+        assert_eq!(
+            unsafe { Lpwstr::from_lpwstr(lpwstr.as_mut_ptr()) },
+            string
+        );
+    }
+
+    #[test]
     fn test_clipboard_is_set() {
         assert!(set_clipboard("abc").is_ok());
+
+        let clipboard = unsafe {
+            open_clipboard();
+            let data = GetClipboardData(CLIPBOARD_FORMATS::CF_UNICODETEXT.0).0;
+            close_clipboard();
+
+            data
+        };
+
+        assert_eq!(
+            unsafe { Lpwstr::from_lpwstr(clipboard as *const _) },
+            "abc"
+        );
     }
 }

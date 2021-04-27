@@ -8,4 +8,5 @@ edition = "2018"
 windows = "0.8.0"
 
 [dependencies]
+thiserror = "1.0.24"
 windows = "0.8.0"
