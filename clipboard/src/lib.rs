@@ -2,189 +2,207 @@ mod bindings {
     ::windows::include_bindings!();
 }
 
-mod private {
-    pub trait Sealed {}
-
-    impl<T: AsRef<str>> Sealed for T {}
-}
-
 use bindings::Windows::Win32::{
     DataExchange::*,
-    SystemServices::{CLIPBOARD_FORMATS, HANDLE},
-    WindowsAndMessaging::HWND,
+    SystemServices::*,
+    WindowsAndMessaging::*,
 };
-use std::{error, fmt};
+use std::{cell::Cell, mem};
 
 /// Inspiration: https://docs.microsoft.com/en-us/windows/win32/dataxchg/using-the-clipboard#copying-information-to-the-clipboard
-pub fn set_clipboard(s: &str) -> Result<(), ErrorKind> {
-    if !open_clipboard() {
-        return Err(ErrorKind::OpenClipboard);
+pub struct Clipboard {
+    is_open: Cell<bool>,
+}
+
+impl Default for Clipboard {
+    fn default() -> Self {
+        Self { is_open: Cell::new(false) }
+    }
+}
+
+impl Clipboard {
+    pub fn new() -> Self {
+        Default::default()
     }
 
-    let unicode = s.to_lpwstr();
-    let handle = HANDLE(unicode.as_ptr() as _);
-    // If the function succeeds, the return value is the handle to the data.
-    // If the function fails, the return value is NULL.
-    let failed_to_set_clipboard = unsafe {
-        // If SetClipboardData succeeds, the system owns the object identified
-        // by the hMem parameter. The application may not write to or free the
-        // data once ownership has been transferred to the system, but it can
-        // lock and read from the data until the CloseClipboard function is
-        // called. (The memory must be unlocked before the Clipboard is
-        // closed.) If the hMem parameter identifies a memory object, the
-        // object must have been allocated using the function with the
-        // GMEM_MOVEABLE flag.
-        // https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setclipboarddata
-        SetClipboardData(
-            // Unicode text format. Each line ends with a carriage
-            // return/linefeed (CR-LF) combination. A null character signals
-            // the end of the data.
-            // https://docs.microsoft.com/en-us/windows/win32/dataxchg/standard-clipboard-formats#constants
-            CLIPBOARD_FORMATS::CF_UNICODETEXT.0,
-            handle,
-        )
-    }.is_null();
+    pub fn set_clipboard(&self, s: &str) -> Result<(), Error> {
+        self.open_clipboard()?;
 
-    if !close_clipboard() {
-        if failed_to_set_clipboard {
-            Err(ErrorKind::SetAndCloseClipboard)
+        let unicode = mem::ManuallyDrop::new(Lpwstr::from(s).into_inner());
+        let handle = HANDLE(unicode.as_ptr() as _);
+
+        let clipboard_set_failed = unsafe {
+            SetClipboardData(
+                CLIPBOARD_FORMATS::CF_UNICODETEXT.0,
+                handle,
+            )
+        }.is_null();
+
+        if clipboard_set_failed {
+            mem::ManuallyDrop::into_inner(unicode);
+
+            self.close_clipboard(clipboard_set_failed)?;
+            Err(Error::FailedToSetClipboard)
         } else {
-            Err(ErrorKind::CloseClipboard)
+            self.close_clipboard(clipboard_set_failed)?;
+            Ok(())
         }
-    } else if failed_to_set_clipboard {
-        Err(ErrorKind::SetClipboardData)
-    } else {
-        Ok(())
+    }
+
+    /// https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-openclipboard
+    fn open_clipboard(&self) -> Result<(), Error> {
+        if self.is_open.get() {
+            Err(Error::ClipboardAlreadyOpen)
+        } else if unsafe { OpenClipboard(HWND::NULL) }.0 == 0 {
+            // If an application calls OpenClipboard with hwnd set to NULL,
+            // EmptyClipboard sets the clipboard owner to NULL; this causes
+            // SetClipboardData to fail.
+            Err(Error::FailedToOpenClipboard)
+        } else {
+            self.is_open.set(true);
+
+            Ok(())
+        }
+    }
+
+    /// https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-closeclipboard
+    fn close_clipboard(&self, clipboard_set_failed: bool) -> Result<(), Error> {
+        if !self.is_open.get() {
+            Err(if clipboard_set_failed {
+                Error::ClipboardAlreadyClosedAndFailedToSet
+            } else {
+                Error::ClipboardAlreadyClosed
+            })
+        } else if unsafe { CloseClipboard() }.0 == 0 {
+            Err(if clipboard_set_failed {
+                Error::FailedToSetAndCloseClipboard
+            } else {
+                Error::FailedToCloseClipboard
+            })
+        } else {
+            self.is_open.set(false);
+
+            Ok(())
+        }
     }
 }
 
-fn open_clipboard() -> bool {
-    // If the function succeeds, the return value is nonzero.
-    // If the function fails, the return value is zero.
-    unsafe {
-        // Opens the clipboard for examination and prevents other applications from
-        // modifying the clipboard content.
-        // OpenClipboard fails if another window has the clipboard open.
-        // An application should call the CloseClipboard function after every
-        // successful call to OpenClipboard.
-        // The window identified by the hWndNewOwner parameter does not become
-        // the clipboard owner unless the EmptyClipboard function is called.
-        // If an application calls OpenClipboard with hwnd set to NULL,
-        // EmptyClipboard sets the clipboard owner to NULL; this causes
-        // SetClipboardData to fail.
-        // https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-openclipboard
-        OpenClipboard(
-            // A handle to the window to be associated with the open clipboard.
-            // If this parameter is NULL, the open clipboard is associated with
-            // the current task.
-            HWND::NULL
-        )
-    }.0 != 0
-}
+pub struct Lpwstr(Vec<u16>);
 
-fn close_clipboard() -> bool {
-    // If the function succeeds, the return value is nonzero.
-    // If the function fails, the return value is zero.
-    unsafe {
-        // When the window has finished examining or changing the clipboard,
-        // close the clipboard by calling CloseClipboard. This enables other
-        // windows to access the clipboard.
-        // Do not place an object on the clipboard after calling CloseClipboard.
-        // https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-closeclipboard
-        CloseClipboard()
-    }.0 != 0
-}
-
-pub trait ToLpwstr: private::Sealed {
-    fn to_lpwstr(&self) -> Vec<u16>;
-}
-
-impl<T> ToLpwstr for T
-where
-    T: AsRef<str>
-{
-    fn to_lpwstr(&self) -> Vec<u16> {
-        self.as_ref()
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect()
+impl<T: AsRef<str>> From<T> for Lpwstr {
+    fn from(s: T) -> Self {
+        Self(s.as_ref().encode_utf16().chain(Some(0)).collect())
     }
 }
 
-pub struct Lpwstr;
-
-impl Lpwstr {
-    /// # Safety
-    /// You must ensure your slice has a null-terminating byte.
-    pub unsafe fn from_lpwstr(ptr: *const u16) -> String {
-        use std::slice::from_raw_parts;
+impl From<Lpwstr> for String {
+    fn from(s: Lpwstr) -> Self {
+        let ptr = s.0.as_ptr();
 
         if ptr.is_null() {
-            return String::new();
-        }
+            Self::new()
+        } else {
+            let slice = unsafe {
+                let mut len = 0;
+                loop {
+                    if *ptr.offset(len) == 0 {
+                        break;
+                    }
 
-        let slice = {
-            let mut len = 0;
-            loop {
-                if *ptr.offset(len) == 0 {
-                    break;
+                    len += 1;
                 }
-                len += 1;
-            }
 
-            from_raw_parts(ptr, len as _)
-        };
+                std::slice::from_raw_parts(ptr, len as _)
+            };
 
-        String::from_utf16(slice).unwrap()
+            Self::from_utf16_lossy(slice)
+        }
     }
 }
 
-#[derive(Debug)]
-pub enum ErrorKind {
-    OpenClipboard,
-    SetClipboardData,
-    SetAndCloseClipboard,
-    CloseClipboard,
-}
-
-impl fmt::Display for ErrorKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+impl Lpwstr {
+    pub fn into_inner(self) -> Vec<u16> {
+        self.0
     }
 }
 
-impl error::Error for ErrorKind {}
+#[derive(Debug, PartialEq, thiserror::Error)]
+pub enum Error {
+    #[error("cannot open clipboard twice")]
+    ClipboardAlreadyOpen,
+
+    #[error("error opening clipboard")]
+    FailedToOpenClipboard,
+
+    #[error("error setting clipboard")]
+    FailedToSetClipboard,
+
+    #[error("cannot close clipboard twice")]
+    ClipboardAlreadyClosed,
+
+    #[error("error setting clipboard; cannot close clipboard twice")]
+    ClipboardAlreadyClosedAndFailedToSet,
+
+    #[error("error setting clipboard; error closing clipboard")]
+    FailedToSetAndCloseClipboard,
+
+    #[error("error closing clipboard")]
+    FailedToCloseClipboard,
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_round_trip() {
-        let string = "abcdef";
-        let mut lpwstr = string.to_lpwstr();
+    fn test_lpwstr_round_trip() {
+        let s = Lpwstr::from("abcdef");
 
         assert_eq!(
-            unsafe { Lpwstr::from_lpwstr(lpwstr.as_mut_ptr()) },
-            string
+            String::from(s),
+            "abcdef",
         );
     }
 
     #[test]
     fn test_clipboard_is_set() {
-        assert!(set_clipboard("abc").is_ok());
+        let c = Clipboard::new();
 
-        let clipboard = unsafe {
-            open_clipboard();
-            let data = GetClipboardData(CLIPBOARD_FORMATS::CF_UNICODETEXT.0).0;
-            close_clipboard();
+        assert!(c.set_clipboard("abc").is_ok());
 
-            data
-        };
+        // let clipboard = unsafe {
+        //     open_clipboard();
+        //     let data = GetClipboardData(CLIPBOARD_FORMATS::CF_UNICODETEXT.0).0;
+        //     close_clipboard();
 
-        assert_eq!(
-            unsafe { Lpwstr::from_lpwstr(clipboard as *const _) },
-            "abc"
-        );
+        //     data
+        // };
+
+        // assert_eq!(
+        //     unsafe { Lpwstr::from_lpwstr(clipboard as *const _) },
+        //     "abc"
+        // );
+    }
+
+    #[test]
+    fn test_clipboard_cannot_open_twice() {
+        let c = Clipboard::new();
+
+        c.open_clipboard().ok();
+        let rv = c.open_clipboard();
+        assert_eq!(rv.expect_err("rv is an error"), Error::ClipboardAlreadyOpen);
+
+        c.close_clipboard(false).ok();
+    }
+
+    #[test]
+    fn test_clipboard_cannot_close_twice() {
+        let c = Clipboard::new();
+
+        let rv = c.close_clipboard(false);
+        assert_eq!(rv.expect_err("rv is an error"), Error::ClipboardAlreadyClosed);
+
+        let rv = c.close_clipboard(true);
+        assert_eq!(rv.expect_err("rv is an error"), Error::ClipboardAlreadyClosedAndFailedToSet);
     }
 }
