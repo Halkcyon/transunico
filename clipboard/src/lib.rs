@@ -87,7 +87,7 @@ impl Clipboard {
     }
 }
 
-pub struct Lpwstr(Vec<u16>);
+struct Lpwstr(Vec<u16>);
 
 impl<T: AsRef<str>> From<T> for Lpwstr {
     fn from(s: T) -> Self {

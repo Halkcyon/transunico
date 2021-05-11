@@ -1,4 +1,5 @@
 [workspace]
 members = [
     'clipboard',
+    'mono',
 ]
