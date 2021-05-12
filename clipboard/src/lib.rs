@@ -167,8 +167,14 @@ mod tests {
     #[test]
     fn test_clipboard_is_set() {
         let c = Clipboard::new();
+        let result = c.set_clipboard("abc");
 
-        assert!(c.set_clipboard("abc").is_ok());
+        assert!(result.is_ok());
+
+        if let Err(e) = result {
+            eprintln!("{}", e);
+            panic!("invalid");
+        }
 
         // let clipboard = unsafe {
         //     open_clipboard();

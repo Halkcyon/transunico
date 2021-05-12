@@ -9,17 +9,15 @@ pub trait Translate: Lookup {
 }
 
 impl<T> Translate for T
-    where T: Lookup
+where
+    T: Lookup,
 {
     fn translate(&self, string: &str) -> String {
         let lookup = self.lookup();
 
-        string.chars()
-            .map(|c| if lookup.contains_key(&c) {
-                lookup[&c]
-            } else {
-                c
-            })
+        string
+            .chars()
+            .map(|c| lookup.get(&c).copied().unwrap_or(c))
             .collect()
     }
 }

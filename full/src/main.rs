@@ -1,5 +1,6 @@
-use clipboard::{Clipboard, Error};
+use clipboard::*;
 use std::collections::HashMap;
+use translate::*;
 
 fn main() -> Result<(), Error> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -7,11 +8,12 @@ fn main() -> Result<(), Error> {
         return Ok(());
     }
 
-    let lookup = FullWidth::new();
+    let lookup: FullWidth = Default::default();
 
     let string = args.iter()
         .flat_map(|s| s.trim().split_whitespace())
         .collect::<Vec<&str>>().join(" ");
+    let string = lookup.sub(&string);
 
     let translation = lookup.translate(&string);
 
@@ -21,7 +23,7 @@ fn main() -> Result<(), Error> {
 }
 
 struct FullWidth {
-    map: HashMap<char, char>,
+    lookup: HashMap<char, char>,
 }
 
 impl FullWidth {
@@ -29,11 +31,7 @@ impl FullWidth {
 
     const UNICODE: &'static str = "\u{2002}！＂＃＄％＆＇（）＊＋，－．／０１２３４５６７８９：；＜＝＞？＠ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺ［＼］＾＿｀ａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ｛｜｝～";
 
-    fn new() -> Self {
-        Default::default()
-    }
-
-    fn translate(&self, s: &str) -> String {
+    fn sub(&self, s: &str) -> String {
         s
             .replace("! ", "!")
             .replace(" (", "(")
@@ -47,16 +45,19 @@ impl FullWidth {
             .replace("] ", "]")
             .replace(" {", "{")
             .replace("} ", "}")
-            .chars()
-            .map(|c| self.map.get(&c).copied().unwrap_or(c))
-            .collect()
     }
 }
 
 impl Default for FullWidth {
     fn default() -> Self {
         Self {
-            map: Self::PLAINTEXT.chars().zip(Self::UNICODE.chars()).collect(),
+            lookup: Self::PLAINTEXT.chars().zip(Self::UNICODE.chars()).collect(),
         }
+    }
+}
+
+impl Lookup for FullWidth {
+    fn lookup(&self) -> &HashMap<char, char> {
+        &self.lookup
     }
 }
