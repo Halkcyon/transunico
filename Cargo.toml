@@ -1,7 +1,18 @@
+cargo-features = [ 'strip' ]
+
 [workspace]
 members = [
     'clipboard',
     'fraktur',
     'full',
     'mono',
+    'translate',
 ]
+
+# -Z build-std --target x86_64-pc-windows-msvc
+[profile.release]
+strip = 'symbols'
+opt-level = 'z'
+lto = 'fat'
+codegen-units = 1
+panic = 'abort'
