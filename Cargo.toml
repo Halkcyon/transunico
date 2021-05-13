@@ -6,6 +6,7 @@ members = [
     'fraktur',
     'full',
     'mono',
+    'smol',
     'translate',
 ]
 

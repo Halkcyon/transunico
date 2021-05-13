@@ -58,6 +58,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "smol"
+version = "0.1.0"
+dependencies = [
+ "clipboard",
+ "translate",
+]
+
+[[package]]
 name = "syn"
 version = "1.0.72"
 source = "registry+https://github.com/rust-lang/crates.io-index"
